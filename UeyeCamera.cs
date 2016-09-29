@@ -93,7 +93,11 @@ namespace ViDi2.Training
                 new CameraParameter("Exposure Time", () => ExposureTime, (value) => ExposureTime = (double)value),
                 new CameraParameter("Frame Rate", () => FrameRate, (value) => FrameRate = (double)value),
                 new CameraParameter("Binning", () => Binning, (value) => Binning = (Point)value),
-                new CameraParameter("Pixel Clock", () => PixelClock, (value) => PixelClock = (int)value)
+                new CameraParameter("AOI Offset", () => AOIOffset, (value) => AOIOffset = (Point)value),
+                new CameraParameter("AOI Size", () => AOISize, (value) => AOISize = (Point)value),
+                new CameraParameter("Pixel Clock", () => PixelClock, (value) => PixelClock = (int)value),
+                new CameraParameter("Managed Image", () => ManagedImages, (value) => ManagedImages = (bool)value),
+            
             };
         }
 
@@ -132,21 +136,27 @@ namespace ViDi2.Training
             //ueyeCamera.Memory.ToIntPtr(idx, out img);
             Camera.Memory.GetHeight(idx, out height);
             Camera.Memory.GetWidth(idx, out width);
-
+            uEye.Types.Size<int> s = new uEye.Types.Size<int>();
+            Camera.Memory.GetSize(idx,out s );
+          
             Camera.Memory.GetPitch(idx, out pitch);
 
             IntPtr ptr = new IntPtr();
-            RawImage img;
+            IImage img = null;
             Camera.Memory.ToIntPtr(idx, out ptr);
 
-            RawImage rawImage = new RawImage(width, height, channels, depth, ptr, pitch);
+            if (ManagedImages)
+            {      
+                Byte[] u8img;
+                Camera.Memory.CopyToArray(idx, out u8img);
+                Camera.Memory.Free(idx);
+                Camera.Memory.Allocate(s);
+                img = new ByteImage(width, height, channels, depth, u8img, pitch);
+            }
+            else
+                img = new RawImage(width, height, channels, depth, ptr, pitch);
 
-            //Byte[] u8img;
-            //Camera.Memory.CopyToArray(idx, out u8img);
-            //Camera.Memory.Free(idx);
-            //Camera.Memory.Allocate();
-            //ByteImage byteImage = new ByteImage(width, height, channels, depth, u8img, pitch);
-            return rawImage;
+            return img;
 
         }
 
@@ -416,6 +426,74 @@ namespace ViDi2.Training
             }
         }
 
+
+        public Point AOIOffset
+        {
+               get
+               {
+                   System.Drawing.Rectangle rect = new System.Drawing.Rectangle();
+
+                   Camera.Size.AOI.Get(out rect);
+
+                   Point pt = new Point(rect.X,rect.Y);
+
+                   return pt;
+                }
+
+
+                set
+                {
+                    System.Drawing.Rectangle rect = new System.Drawing.Rectangle();
+                    Camera.Size.AOI.Get(out rect);
+                    rect.X = (int)value.X; rect.Y = (int)value.Y;
+
+                    uEye.Defines.Status statusRet;
+                    statusRet = Camera.Size.AOI.Set(rect);
+
+                    Int32[] memList;
+                    statusRet = Camera.Memory.GetList(out memList);
+                    statusRet = Camera.Memory.Free(memList);
+                    statusRet = Camera.Memory.Allocate();
+
+                    RaisePropertyChanged("AOIOffset");
+                    RaisePropertyChanged("AOISize");
+                }
+        }
+
+        public Point AOISize
+        {
+            get
+            {
+                System.Drawing.Rectangle rect = new System.Drawing.Rectangle();
+
+                Camera.Size.AOI.Get(out rect);
+
+                Point pt = new Point(rect.Height, rect.Width);
+
+                return pt;
+            }
+
+
+            set
+            {
+                System.Drawing.Rectangle rect = new System.Drawing.Rectangle();
+                Camera.Size.AOI.Get(out rect);
+                rect.Height = (int)value.X; rect.Width = (int)value.Y;
+                uEye.Defines.Status statusRet;
+                statusRet = Camera.Size.AOI.Set(rect);
+
+
+                Int32[] memList;
+                statusRet = Camera.Memory.GetList(out memList);
+                statusRet = Camera.Memory.Free(memList);
+                statusRet = Camera.Memory.Allocate();
+
+                RaisePropertyChanged("AIOOffset");
+                RaisePropertyChanged("AOISize");
+            }
+        }
+
+
         public Double Gain
         {
             get
@@ -538,6 +616,13 @@ namespace ViDi2.Training
             }
         }
 
+        bool managedImages = false;
+        public bool ManagedImages
+        {
+            get { return managedImages; }
+            set { managedImages = value;
+            RaisePropertyChanged("ManagedImages");}
+        }
 
         public void SaveParametersToDevice()
         {

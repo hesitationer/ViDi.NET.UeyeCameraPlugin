@@ -1,6 +1,6 @@
-# ViDi.NET ICamera interface
+# ViDi.NET Ueye Camera 
 
-Standard interface to develop ViDi Plugin with camera support
+Implementation of ICamera using Ueye Camera
 
 ## Needed references : 
 ### ViDi
