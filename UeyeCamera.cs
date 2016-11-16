@@ -10,6 +10,7 @@ using System.Threading;
 using System.Collections.Specialized;
 using System.Globalization;
 using ViDi2.Camera;
+using System.Collections.ObjectModel;
 
 namespace ViDi2.Training
 {
@@ -60,27 +61,21 @@ namespace ViDi2.Training
 
         bool bLive = false;
 
-        public string Name
-        {
-            get;
-            private set;
-        }
-        public bool IsOpen
-        {
-            get
-            {
-                return (Camera != null && Camera.IsOpened);
-            }
-        }
+        public string Name { get; private set; }
+
+        public bool IsOpen { get { return (Camera != null && Camera.IsOpened); } }
+
+        ObservableCollection<ICameraParameter> parameters;
 
         int cameraIdx;
-        public UEyeCamera(int idx, string name, ViDi2.Training.UI.UEyeCameraProvider provider )
+        public UEyeCamera(int idx, string name, ViDi2.Training.UI.UEyeCameraProvider provider)
         {
             Camera = new uEye.Camera();
             cameraIdx = idx;
             Provider = provider;
             Name = name;
-            parameters = new List<ICameraParameter>
+
+            parameters = new ObservableCollection<ICameraParameter>
             {
                 new CameraParameter("Grayscale", () => GrayScale, null),
                 new CameraParameter("Sensor Size", () => 
@@ -91,13 +86,12 @@ namespace ViDi2.Training
                     }, 
                     null),
                 new CameraParameter("Exposure Time", () => ExposureTime, (value) => ExposureTime = (double)value),
+                new CameraParameter("Auto Exposure", () => IsAutoExposure, (value) => IsAutoExposure= (bool)value),
                 new CameraParameter("Frame Rate", () => FrameRate, (value) => FrameRate = (double)value),
                 new CameraParameter("Binning", () => Binning, (value) => Binning = (Point)value),
-                new CameraParameter("AOI Offset", () => AOIOffset, (value) => AOIOffset = (Point)value),
-                new CameraParameter("AOI Size", () => AOISize, (value) => AOISize = (Point)value),
+                new CameraParameter("Area of Interest", () => AreaOfInterest, (value) => AreaOfInterest= (Rect)value),
                 new CameraParameter("Pixel Clock", () => PixelClock, (value) => PixelClock = (int)value),
-                new CameraParameter("Managed Image", () => ManagedImages, (value) => ManagedImages = (bool)value),
-            
+                new CameraParameter("Managed Image", () => ManagedImage, (value) => ManagedImage = (bool)value),
             };
         }
 
@@ -128,42 +122,30 @@ namespace ViDi2.Training
             {
                 throw new Exception("unknown image format");
             }
-          
-            int width;
-            int height;
-            int pitch;
-            //IntPtr img;
-            //ueyeCamera.Memory.ToIntPtr(idx, out img);
-            Camera.Memory.GetHeight(idx, out height);
-            Camera.Memory.GetWidth(idx, out width);
-            uEye.Types.Size<int> s = new uEye.Types.Size<int>();
-            Camera.Memory.GetSize(idx,out s );
-          
+            
+            var size = new uEye.Types.Size<int>();
+            Camera.Memory.GetSize(idx, out size);
+            int pitch; 
             Camera.Memory.GetPitch(idx, out pitch);
 
-            IntPtr ptr = new IntPtr();
-            IImage img = null;
-            Camera.Memory.ToIntPtr(idx, out ptr);
-
-            if (ManagedImages)
+            if (ManagedImage)
             {      
                 Byte[] u8img;
                 Camera.Memory.CopyToArray(idx, out u8img);
-                Camera.Memory.Free(idx);
-                Camera.Memory.Allocate(s);
-                img = new ByteImage(width, height, channels, depth, u8img, pitch);
+                return new ByteImage(size.Width, size.Height, channels, depth, u8img, pitch);
             }
             else
-                img = new RawImage(width, height, channels, depth, ptr, pitch);
+            {
+                var ptr = new IntPtr();
+                Camera.Memory.ToIntPtr(idx, out ptr);
+                var img = new RawImage(size.Width, size.Height, channels, depth, ptr, pitch);
 
-            return img;
-
+                return new WpfImage(img.BitmapSource);
+            }
         }
-
 
         public void Open()
         {
-
             if (Camera.IsOpened)
                 return;
 
@@ -208,7 +190,7 @@ namespace ViDi2.Training
 
             if (statusRet != uEye.Defines.Status.Success)
             {
-                throw new Exception("Failed to close camera");
+                throw new Exception("failed to close camera");
             }
         }
 
@@ -318,24 +300,20 @@ namespace ViDi2.Training
         {
             try
             {
-                // Get the camera
-                uEye.Camera Camera = sender as uEye.Camera;
+                if (!bLive) return;
 
-                if (!bLive)
-                    return;
+                var Camera = sender as uEye.Camera;
 
                 // lock the memory
                 Int32 s32MemID;
                 Camera.Memory.GetActive(out s32MemID);
                 Camera.Memory.Lock(s32MemID);
-                // callback that converts the image from memory to bmp
+                
                 IImage img = MemoryToImage(s32MemID);
-                {
-                    ImageGrabbed(this,img);
-                }
-                // free the memory when the copy is done to 
-                // let the camera reuse it for next frames
+                
                 Camera.Memory.Unlock(s32MemID);
+
+                ImageGrabbed(this, img);
             }
             catch (TaskCanceledException)
             {
@@ -371,6 +349,29 @@ namespace ViDi2.Training
                 RaisePropertyChanged("ExposureTime");
             }
         }
+
+        public bool IsAutoExposure
+        {
+            get 
+            {
+                return Camera.AutoFeatures.Sensor.Shutter.Supported ?
+                    Camera.AutoFeatures.Sensor.Shutter.Enabled :
+                    Camera.AutoFeatures.Software.Shutter.Enabled;
+            }
+            set 
+            {
+                if (Camera.AutoFeatures.Sensor.Shutter.Supported)
+                {
+                    Camera.AutoFeatures.Sensor.Shutter.Enabled = value;
+                }
+                else
+                {
+                    Camera.AutoFeatures.Software.Shutter.Enabled = value;
+                    Camera.AutoFeatures.Software.Gain.Enabled = value;
+                }
+            }
+        }
+        
         public Double FrameRate
         {
             get
@@ -385,7 +386,6 @@ namespace ViDi2.Training
                 }
 
                 return dValue;
-
             }
             set
             {
@@ -426,87 +426,35 @@ namespace ViDi2.Training
             }
         }
 
-
-        public Point AOIOffset
+        public Rect AreaOfInterest
         {
-               get
-               {
-                   System.Drawing.Rectangle rect = new System.Drawing.Rectangle();
-
-                   Camera.Size.AOI.Get(out rect);
-
-                   Point pt = new Point(rect.X,rect.Y);
-
-                   return pt;
-                }
-
-
-                set
-                {
-                    System.Drawing.Rectangle rect = new System.Drawing.Rectangle();
-                    Camera.Size.AOI.Get(out rect);
-                    rect.X = (int)value.X; rect.Y = (int)value.Y;
-
-                    uEye.Defines.Status statusRet;
-                    statusRet = Camera.Size.AOI.Set(rect);
-
-                    Int32[] memList;
-                    statusRet = Camera.Memory.GetList(out memList);
-                    statusRet = Camera.Memory.Free(memList);
-                    statusRet = Camera.Memory.Allocate();
-
-                    RaisePropertyChanged("AOIOffset");
-                    RaisePropertyChanged("AOISize");
-                }
-        }
-
-        public Point AOISize
-        {
-            get
+            get 
             {
                 System.Drawing.Rectangle rect = new System.Drawing.Rectangle();
 
                 Camera.Size.AOI.Get(out rect);
 
-                Point pt = new Point(rect.Height, rect.Width);
-
-                return pt;
+                return new Rect(rect.Left, rect.Top, rect.Width, rect.Height);
             }
-
-
-            set
+            set 
             {
-                System.Drawing.Rectangle rect = new System.Drawing.Rectangle();
-                Camera.Size.AOI.Get(out rect);
-                rect.Height = (int)value.X; rect.Width = (int)value.Y;
+                System.Drawing.Rectangle rect = new System.Drawing.Rectangle((int)value.X, (int)value.Y, (int)value.Width, (int)value.Height);
+                
                 uEye.Defines.Status statusRet;
                 statusRet = Camera.Size.AOI.Set(rect);
 
+                if (statusRet != uEye.Defines.Status.SUCCESS)
+                {
+                    throw new Exception("failed to set area of interest");
+                }
 
                 Int32[] memList;
                 statusRet = Camera.Memory.GetList(out memList);
                 statusRet = Camera.Memory.Free(memList);
                 statusRet = Camera.Memory.Allocate();
 
-                RaisePropertyChanged("AIOOffset");
-                RaisePropertyChanged("AOISize");
+                RaisePropertyChanged("AreaOfInterest");
             }
-        }
-
-
-        public Double Gain
-        {
-            get
-            {
-
-                return 0;
-            }
-
-            set
-            {
-                RaisePropertyChanged("Gain");
-            }
-
         }
 
         public Point Binning
@@ -616,13 +564,7 @@ namespace ViDi2.Training
             }
         }
 
-        bool managedImages = false;
-        public bool ManagedImages
-        {
-            get { return managedImages; }
-            set { managedImages = value;
-            RaisePropertyChanged("ManagedImages");}
-        }
+        public bool ManagedImage { get; set; }
 
         public void SaveParametersToDevice()
         {
@@ -680,8 +622,6 @@ namespace ViDi2.Training
         {
             get { return parameters; }
         }
-
-        List<ICameraParameter> parameters;
     
         ICameraProvider ICamera.Provider
         {

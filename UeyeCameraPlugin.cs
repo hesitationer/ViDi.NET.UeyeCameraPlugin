@@ -13,9 +13,9 @@ using System.Windows.Media.Imaging;
 using System.Windows.Navigation;
 using System.Windows.Shapes;
 using System.Drawing;
-using ViDi2;
 using ViDi2.Training;
 using ViDi2.Camera;
+using ViDi2;
 
 using System.Reflection;
 using System.Collections.ObjectModel;
